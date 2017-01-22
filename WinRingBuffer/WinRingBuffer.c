@@ -33,7 +33,9 @@ void generateArrayOfSymbols(char *buf) {
 }
 
 int main() {
-	initRingBuffer(240);
+	if (!initRingBuffer(240)) {
+		return -1;
+	}
 	
 	DWORD   dwThreadIdArray[MAX_THREADS];
 	HANDLE  hThreadArray[MAX_THREADS];
@@ -72,8 +74,9 @@ int main() {
 	WaitForMultipleObjects(MAX_THREADS, hThreadArray, TRUE, INFINITE);
 
 	// Close all thread handles and free memory allocations.
-	
 	flushAll();
+	destroyRingBuffer();
+	
     return 0;
 }
 

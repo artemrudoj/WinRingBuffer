@@ -289,8 +289,7 @@ bool isEnoughtForHeader(RingBuffer *buffer, char * pointer) {
 		 ringBuffer->pointerToNextToWriteByte = ringBuffer->start + sizes->fromBegginningBytes;
 	 }
 	 //todo should sync
-	 int restToEndForFlush = (ringBuffer->start + ringBuffer->size) - ringBuffer->pointerToFirstNoFlushedByte;
-	 if (restToEnd < logEntryHeaderLength) {
+	 if (!isEnoughtForHeader(ringBuffer, ringBuffer->pointerToFirstNoFlushedByte)) {
 		 ringBuffer->pointerToFirstNoFlushedByte = ringBuffer->start;
 	 }
 	 return oldStartToWrite;
@@ -323,4 +322,23 @@ bool isEnoughtForHeader(RingBuffer *buffer, char * pointer) {
 
  int sizeOfLogEntryHeader() {
 	 return sizeof(bool) + sizeof(int);
+ }
+
+ void destroyRingBuffer() {
+	 destroyFileHandler(&MainRingBuffer->filehandler);
+	 destroyLocker(&MainRingBuffer->locker);
+	 destroyFlushThread(&MainRingBuffer->flusherThread);
+	 freeMemory(MainRingBuffer->bufferForFlushingThread);
+	 freeMemory(MainRingBuffer->start);
+	 freeMemory(MainRingBuffer);
+ }
+
+ void destroyLocker(Locker *locker) {
+	 CloseHandle(locker->mutex);
+ }
+ void destroyFlushThread(FlushThread *workerThread) {
+	 CloseHandle(workerThread->workerThread);
+ }
+ void destroyFileHandler(FileHandler *locker) {
+	 CloseHandle(locker->hFile);
  }

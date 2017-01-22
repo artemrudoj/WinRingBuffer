@@ -7,17 +7,37 @@ RingBuffer *MainRingBuffer;
 bool initRingBuffer(int size)
 {
 	MainRingBuffer = (RingBuffer *)allocateMemory(sizeof(RingBuffer));
+	if (MainRingBuffer == NULL) {
+		PRINT("MainRingBuffer = NULL");
+		return false;
+	}
 	MainRingBuffer->size = size;
 	MainRingBuffer->start = allocateMemory(size);
+	if (MainRingBuffer->start == NULL) {
+		PRINT("MainRingBuffer->start = NULL");
+		goto free_buf;
+	}
 	MainRingBuffer->pointerToFirstNoFlushedByte = MainRingBuffer->start;
 	MainRingBuffer->pointerToNextToWriteByte = MainRingBuffer->start;
-	MainRingBuffer->filehandler = (RingBuffer *)allocateMemory(sizeof(RingBuffer));
-	initFileHandler(MainRingBuffer->filehandler);
-	MainRingBuffer->locker = (Locker *)allocateMemory(sizeof(Locker));
-	initLocker(MainRingBuffer->locker);
-	MainRingBuffer->flusherThread = (FlushThread *)allocateMemory(sizeof(FlushThread));
-	initFlushThread(MainRingBuffer->flusherThread);
+
+	if (!initFileHandler(&MainRingBuffer->filehandler)) {
+		PRINT("initFileHandler incorrect");
+		goto free_buf;
+	}
+	if (!initLocker(&MainRingBuffer->locker)) {
+		PRINT("initLocker incorrect");
+		goto free_buf;
+	}
+	if (!initFlushThread(&MainRingBuffer->flusherThread)) {
+		PRINT("initFlushThread incorrect");
+		goto free_buf;
+	}
 	return true;
+free_buf:
+	freeMemory(MainRingBuffer->start);
+free_main_buf:
+	freeMemory(MainRingBuffer);
+	return false;
 }
 
 void log(char * string) {
@@ -43,12 +63,12 @@ void flush(RingBuffer *ringBuffer) {
 
 void flushToDisk(RingBuffer *ringBuffer, ShouldWrite *shouldWrite) {
 	if (shouldWrite->toEndBytes != 0) {
-		writeToFile(ringBuffer->filehandler, ringBuffer->pointerToFirstNoFlushedByte, 
+		writeToFile(&ringBuffer->filehandler, ringBuffer->pointerToFirstNoFlushedByte, 
 			shouldWrite->toEndBytes);
 		ringBuffer->pointerToFirstNoFlushedByte = ringBuffer->pointerToFirstNoFlushedByte + shouldWrite->toEndBytes;
 	}
 	if (shouldWrite->fromBegginningBytes != 0) {
-		writeToFile(ringBuffer->filehandler, ringBuffer->start, shouldWrite->fromBegginningBytes);
+		writeToFile(&ringBuffer->filehandler, ringBuffer->start, shouldWrite->fromBegginningBytes);
 		ringBuffer->pointerToFirstNoFlushedByte = ringBuffer->start + shouldWrite->fromBegginningBytes;
 	}
 	//todo should be atomic
@@ -56,7 +76,7 @@ void flushToDisk(RingBuffer *ringBuffer, ShouldWrite *shouldWrite) {
 }
 
 
-void writeToFile(FileHandler *handler, int* start, int length) {
+bool writeToFile(FileHandler *handler, int* start, int length) {
 	BOOL bErrorFlag = FALSE;
 	DWORD dwBytesWritten = 0;
 	bErrorFlag = WriteFile(
@@ -66,23 +86,21 @@ void writeToFile(FileHandler *handler, int* start, int length) {
 		&dwBytesWritten, // number of bytes that were written
 		NULL);            // no overlapped structure
 
-	if (FALSE == bErrorFlag)
-	{
-		printf("Terminal failure: Unable to write to file.\n");
-		abort();
-	}
-	else
-	{
+	if (FALSE == bErrorFlag) {
+		PRINT("Terminal failure: Unable to write to file.\n");
+		return false;
+	} else{
 		if (length != dwBytesWritten)
 		{
 			// This is an error because a synchronous write that results in
 			// success (WriteFile returns TRUE) should write all data as
 			// requested. This would not necessarily be the case for
 			// asynchronous writes.
-			printf("Error: dwBytesWritten != dwBytesToWrite\n");
-			abort();
+			PRINT("Error: dwBytesWritten != dwBytesToWrite\n");
+			return false;
 		}
 	};
+	return true;
 }
 
 //todo shoudle be correct type for address
@@ -97,28 +115,26 @@ void writeToFile(FileHandler *handler, int* start, int length) {
 	 }
 }
 
- void initLocker(Locker *locker) {
+ bool initLocker(Locker *locker) {
 	 locker->mutex = CreateMutex(
 		 NULL,              // default security attributes
 		 FALSE,             // initially not owned
 		 NULL);
-	 if (locker->mutex == NULL)
-	 {
-		 printf("CreateMutex error: %d\n", GetLastError());
-		 abort();
+	 if (locker->mutex == NULL) {
+		 PRINT("CreateMutex error: %d\n", GetLastError());
+		 return false;
 	 }
+	 return true;
  }
 
- DWORD WINAPI FlushToDisk(LPVOID lpParam)
- {
-	 
+ DWORD WINAPI FlushToDisk(LPVOID lpParam) {
 	 while (1) {
 		 Sleep(1000);
 		 flush(MainRingBuffer);
 	}
  }
 
- void initFlushThread(FlushThread *workerThread) {
+ bool initFlushThread(FlushThread *workerThread) {
 	 workerThread->workerThread = CreateThread(
 		 NULL,       // default security attributes
 		 0,          // default stack size
@@ -127,14 +143,14 @@ void writeToFile(FileHandler *handler, int* start, int length) {
 		 0,          // default creation flags
 		 &workerThread->ThreadID); // receive thread identifier
 
-	 if (workerThread->workerThread == NULL)
-	 {
-		 printf("CreateThread error: %d\n", GetLastError());
-		 abort();
+	 if (workerThread->workerThread == NULL) {
+		 PRINT("CreateThread error: %d\n", GetLastError());
+		 return false;
 	 }
+	 return true;
  }
 
- void initFileHandler(FileHandler *locker) {
+ bool initFileHandler(FileHandler *locker) {
 	 locker->hFile = CreateFile(LOG_FILE_NAME,                // name of the write
 		 GENERIC_WRITE,          // open for writing
 		 0,                      // do not share
@@ -143,30 +159,32 @@ void writeToFile(FileHandler *handler, int* start, int length) {
 		 FILE_ATTRIBUTE_NORMAL,  // normal file
 		 NULL);                  // no attr. template
 
-	 if (locker->hFile == INVALID_HANDLE_VALUE)
-	 {
-		 printf("Unable to open file %d\n", GetLastError());
-		 abort();
+	 if (locker->hFile == INVALID_HANDLE_VALUE) {
+		 PRINT("Unable to open file %d\n", GetLastError());
+		 return false;
 	 }
+	 return true;
  }
 
- void lockForLog(RingBuffer *ringBuffer) {
+ bool lockForLog(RingBuffer *ringBuffer) {
 	 DWORD dwWaitResult = WaitForSingleObject(
-		 ringBuffer->locker->mutex,    // handle to mutex
+		 ringBuffer->locker.mutex,    // handle to mutex
 		 INFINITE);  // no time-out interval
 	 if (dwWaitResult == WAIT_ABANDONED) {
-		 printf("Unable to WaitForSingleObject %d\n", GetLastError());
-		 abort();
+		 PRINT("Unable to WaitForSingleObject %d\n", GetLastError());
+		 return false;
 	 }
+	 return true;
  }
 
  
 
- void unlockForLog(RingBuffer *ringBuffer) {
-	 if (!ReleaseMutex(ringBuffer->locker->mutex)) {
-		 printf("Unable to oReleaseMutex %d\n", GetLastError());
-		 abort();
+ bool unlockForLog(RingBuffer *ringBuffer) {
+	 if (!ReleaseMutex(ringBuffer->locker.mutex)) {
+		 PRINT("Unable to oReleaseMutex %d\n", GetLastError());
+		 return false;
 	 }
+	 return true;
  }
 
  void notifyForFlush(RingBuffer *ringBuffer) {
@@ -224,4 +242,8 @@ void writeToFile(FileHandler *handler, int* start, int length) {
 
  void flushAll() {
 	 Sleep(5000);
+ }
+
+ void freeMemory(void *pointer) {
+	 free(pointer);
  }

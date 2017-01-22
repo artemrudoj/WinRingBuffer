@@ -27,7 +27,7 @@ typedef struct _FileHandler {
 } FileHandler;
 
 typedef struct _RingBuffer {
-	int* start;
+	char* start;
 	int  size;
 	char* pointerToFirstNoFlushedByte;
 	char* pointerToNextToWriteByte;
@@ -44,7 +44,12 @@ typedef struct _ShouldWrite {
 
 
 
+typedef struct _LogEntry {
+	bool isReady;
+	int size;
+}LogEntry;
 
+int sizeOfLogEntryHeader();
 
 
 bool initFileHandler(FileHandler *locker);
@@ -57,9 +62,8 @@ int  getSizeOfString(char *string);
 bool lockForLog(RingBuffer *ringBuffer);
 bool unlockForLog(RingBuffer *ringBuffer);
 void* tryToReservPointers(RingBuffer * ringBuffer, int size, ShouldWrite *sizes);
-void saveToBuffer(RingBuffer *ringBuffer, void* strat, char *string, ShouldWrite *sizes);
-void calculatePossibleFlushesSizes(RingBuffer *ringBuffer, ShouldWrite* shouldWrite);
-void flushToDisk(RingBuffer *ringBuffer, ShouldWrite *shouldWrite);
+void saveToBuffer(RingBuffer *ringBuffer, char* strat, char *string, ShouldWrite *sizes);
+void* calculatePossibleFlushesSizes(RingBuffer *ringBuffer, char *buffer, int *sumLength);
 bool shouldFlush(RingBuffer *ringBuffer);
 void notifyForFlush(RingBuffer *ringBuffer);
 //todo shoudle be correct type for address
@@ -68,3 +72,4 @@ int calculateCurrentFreeSpace(RingBuffer *buffer);
 void* allocateMemory(int size);
 void flushAll();
 void freeMemory(void *pointer);
+bool isEnoughtForHeader(RingBuffer *buffer, char* pointer);

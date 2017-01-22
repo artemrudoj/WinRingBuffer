@@ -2,7 +2,7 @@
 //
 
 #include "stdafx.h"
-#define MAX_THREADS 5
+#define MAX_THREADS 15
 
 DWORD WINAPI MyThreadFunction(LPVOID lpParam);
 
@@ -33,7 +33,7 @@ void generateArrayOfSymbols(char *buf) {
 }
 
 int main() {
-	initRingBuffer(15);
+	initRingBuffer(240);
 	
 	DWORD   dwThreadIdArray[MAX_THREADS];
 	HANDLE  hThreadArray[MAX_THREADS];
@@ -41,6 +41,10 @@ int main() {
 	// Create MAX_THREADS worker threads.
 	char buf[MAX_THREADS];
 	generateArrayOfSymbols(buf);
+	log("asdasdad\r\n");
+	log("qqqqqqqq\r\n");
+	log("cccccccc\r\n");
+	
 	for (int i = 0; i<MAX_THREADS; i++)
 	{
 
@@ -68,7 +72,7 @@ int main() {
 	WaitForMultipleObjects(MAX_THREADS, hThreadArray, TRUE, INFINITE);
 
 	// Close all thread handles and free memory allocations.
-
+	
 	flushAll();
     return 0;
 }

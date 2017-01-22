@@ -4,8 +4,7 @@
 LPCTSTR LOG_FILE_NAME = L"log.txt";
 RingBuffer *MainRingBuffer;
 
-bool initRingBuffer(int size)
-{
+bool initRingBuffer(int size) {
 	MainRingBuffer = (RingBuffer *)allocateMemory(sizeof(RingBuffer));
 	if (MainRingBuffer == NULL) {
 		PRINT("MainRingBuffer = NULL");
@@ -44,36 +43,34 @@ void log(char * string) {
 	lockForLog(MainRingBuffer);
 	int stringLength = getSizeOfString(string);
 	ShouldWrite sizes;
-	void *startAddress = tryToReservPointers(MainRingBuffer, stringLength, &sizes);
+	char *startAddress = tryToReservPointers(MainRingBuffer, stringLength, &sizes);
 	while (startAddress == NULL) {
 		startAddress = tryToReservPointers(MainRingBuffer, stringLength, &sizes);
 	}
-	saveToBuffer(MainRingBuffer, startAddress, string, &sizes);
+	LogEntry* logEntry = (LogEntry* )startAddress;
+	
+	logEntry->isReady = false;
+	logEntry->size = stringLength;
+	
 	unlockForLog(MainRingBuffer);
+	saveToBuffer(MainRingBuffer, startAddress, string, &sizes);
+	logEntry->isReady = true;
+	
 	if (shouldFlush(MainRingBuffer)) {
 		notifyForFlush(MainRingBuffer);
 	}
 }
 
 void flush(RingBuffer *ringBuffer) {
-	ShouldWrite shouldWrite;
-	calculatePossibleFlushesSizes(ringBuffer, &shouldWrite);
-	flushToDisk(ringBuffer, &shouldWrite);
+	char buf[200];
+	int length;
+	void * lastNonFlushedPointer = calculatePossibleFlushesSizes(ringBuffer, buf, &length);
+	if (lastNonFlushedPointer != NULL) {
+		writeToFile(&ringBuffer->filehandler, buf, length);
+		ringBuffer->pointerToFirstNoFlushedByte = lastNonFlushedPointer;
+	}
 }
 
-void flushToDisk(RingBuffer *ringBuffer, ShouldWrite *shouldWrite) {
-	if (shouldWrite->toEndBytes != 0) {
-		writeToFile(&ringBuffer->filehandler, ringBuffer->pointerToFirstNoFlushedByte, 
-			shouldWrite->toEndBytes);
-		ringBuffer->pointerToFirstNoFlushedByte = ringBuffer->pointerToFirstNoFlushedByte + shouldWrite->toEndBytes;
-	}
-	if (shouldWrite->fromBegginningBytes != 0) {
-		writeToFile(&ringBuffer->filehandler, ringBuffer->start, shouldWrite->fromBegginningBytes);
-		ringBuffer->pointerToFirstNoFlushedByte = ringBuffer->start + shouldWrite->fromBegginningBytes;
-	}
-	//todo should be atomic
-	ringBuffer->countOfNonFlushedBytes = 0;
-}
 
 
 bool writeToFile(FileHandler *handler, int* start, int length) {
@@ -89,7 +86,7 @@ bool writeToFile(FileHandler *handler, int* start, int length) {
 	if (FALSE == bErrorFlag) {
 		PRINT("Terminal failure: Unable to write to file.\n");
 		return false;
-	} else{
+	} else {
 		if (length != dwBytesWritten)
 		{
 			// This is an error because a synchronous write that results in
@@ -103,16 +100,54 @@ bool writeToFile(FileHandler *handler, int* start, int length) {
 	return true;
 }
 
+bool isEnoughtForHeader(RingBuffer *buffer, char * pointer) {
+	if (buffer->start + buffer->size - pointer > sizeOfLogEntryHeader()) {
+		return true;
+	} else {
+		return false;
+	}
+}
 //todo shoudle be correct type for address
- void calculatePossibleFlushesSizes(RingBuffer *ringBuffer, ShouldWrite* shouldWrite) {
-	 int diff = ringBuffer->pointerToNextToWriteByte - ringBuffer->pointerToFirstNoFlushedByte;
-	 if (diff >= 0) {
-		 shouldWrite->toEndBytes = diff;
-		 shouldWrite->fromBegginningBytes = 0;
-	 } else {
-		 shouldWrite->toEndBytes = ringBuffer->start + ringBuffer->size - ringBuffer->pointerToFirstNoFlushedByte;
-		 shouldWrite->fromBegginningBytes = ringBuffer->size + diff;
+ void* calculatePossibleFlushesSizes(RingBuffer *ringBuffer, char *buffer, int *sumLength) {
+	 // nothing to flush
+	 if (ringBuffer->pointerToFirstNoFlushedByte == ringBuffer->pointerToNextToWriteByte) {
+		 return NULL;
 	 }
+	 LogEntry *iterator;
+	 char *data;
+	 int headerSize = sizeOfLogEntryHeader();
+	 if (isEnoughtForHeader(ringBuffer, ringBuffer->pointerToFirstNoFlushedByte)) {
+		 iterator = ringBuffer->pointerToFirstNoFlushedByte;
+	 } else {
+		 iterator = ringBuffer->start;
+	 }
+	 *sumLength = 0;
+	 char *tmpBuffer = buffer;
+	 void *firstToNonFlushed = iterator;
+	 while (iterator->isReady == 1) {
+		 (*sumLength) += iterator->size;
+		 iterator->isReady = false;
+		 data = (char *)iterator + headerSize;
+		 int sizeToEnd = (ringBuffer->start + ringBuffer->size) - data;
+		 int diff = sizeToEnd - iterator->size;
+		 if (diff >= 0) {
+			 memcpy(tmpBuffer, data, iterator->size);
+			 tmpBuffer += iterator->size;
+			 iterator = (char *)iterator + headerSize + iterator->size;
+		 } else {
+			 if (sizeToEnd != 0) {
+				 memcpy(tmpBuffer, data, sizeToEnd);
+			 }
+			 memcpy(tmpBuffer + sizeToEnd, ringBuffer->start,  -diff);
+			 tmpBuffer += iterator->size;
+			 iterator = (char *)ringBuffer->start - diff;
+		 }
+		 firstToNonFlushed = iterator;
+		 if (!isEnoughtForHeader(ringBuffer, iterator)) {
+			 iterator = ringBuffer->start;
+		 }
+	 }
+	 return firstToNonFlushed;
 }
 
  bool initLocker(Locker *locker) {
@@ -131,7 +166,7 @@ bool writeToFile(FileHandler *handler, int* start, int length) {
 	 while (1) {
 		 Sleep(1000);
 		 flush(MainRingBuffer);
-	}
+	 }
  }
 
  bool initFlushThread(FlushThread *workerThread) {
@@ -195,30 +230,61 @@ bool writeToFile(FileHandler *handler, int* start, int length) {
 	 return false;
  }
 
- void saveToBuffer(RingBuffer *ringBuffer, void * startAddress, char *string, ShouldWrite *sizes) {
-	 if (sizes->toEndBytes != 0) {
-		 memcpy(startAddress, string, sizes->toEndBytes);
-	 }
-	 if (sizes->fromBegginningBytes != 0) {
-		 memcpy(ringBuffer->start, string + sizes->toEndBytes, sizes->fromBegginningBytes);
+ //should consider header
+ void saveToBuffer(RingBuffer *ringBuffer, char * startAddress, char *string, ShouldWrite *sizes) {
+	 int headerSize = sizeOfLogEntryHeader();
+	 // all on begin of buffer
+	 if (sizes->toEndBytes == 0) {
+		 memcpy(ringBuffer->start + headerSize, string, sizes->fromBegginningBytes - headerSize);
+	 } else if (sizes->toEndBytes == headerSize){
+		 //only header on the end of buffer
+		 memcpy(ringBuffer->start, string, sizes->fromBegginningBytes);
+	 } else {
+		 //only header and some of raw data on the end
+		 sizes->toEndBytes -= headerSize;
+		 char *tmpPointer = (char *)startAddress;
+		 tmpPointer += headerSize;
+		 memcpy(tmpPointer, string, sizes->toEndBytes);
+		 if (sizes->fromBegginningBytes != 0) {
+			 memcpy(ringBuffer->start, string + sizes->toEndBytes, sizes->fromBegginningBytes);
+		 }
 	 }
  }
 
  void * tryToReservPointers(RingBuffer * ringBuffer, int size, ShouldWrite *sizes) {
 	 int currentAvaliableSize = calculateCurrentFreeSpace(ringBuffer);
-	 if (currentAvaliableSize < size) {
+	 int logEntryHeaderLength = sizeOfLogEntryHeader();
+
+	 int restToEnd = (ringBuffer->start + ringBuffer->size) - ringBuffer->pointerToNextToWriteByte;
+	 int additionalLengthForFragmentation;
+     // header always full on end of the line otherwise to begin
+	 if (restToEnd < logEntryHeaderLength) {
+		 additionalLengthForFragmentation = restToEnd;
+	 } else {
+		 additionalLengthForFragmentation = 0;
+	 }
+	 if (currentAvaliableSize < size + logEntryHeaderLength + additionalLengthForFragmentation) {
 		 return NULL;
 	 }
-	 int diff = (ringBuffer->start + ringBuffer->size) - (ringBuffer->pointerToNextToWriteByte + size);
+	 if (restToEnd < logEntryHeaderLength) {
+		 ringBuffer->pointerToNextToWriteByte = ringBuffer->start;
+	 }
+	 int fullSizeWithHeader = size + logEntryHeaderLength;
+	 int diff = (ringBuffer->start + ringBuffer->size) - (ringBuffer->pointerToNextToWriteByte + fullSizeWithHeader);
 	 void * oldStartToWrite = ringBuffer->pointerToNextToWriteByte;
 	 if (diff >= 0) {
-		 ringBuffer->pointerToNextToWriteByte += size;
-		 sizes->toEndBytes = size;
+		 ringBuffer->pointerToNextToWriteByte += fullSizeWithHeader;
+		 sizes->toEndBytes = fullSizeWithHeader;
 		 sizes->fromBegginningBytes = 0;
 	 } else {
-		 ringBuffer->pointerToNextToWriteByte = ringBuffer->start - diff;
-		 sizes->toEndBytes = ringBuffer->start + ringBuffer->size - ringBuffer->pointerToNextToWriteByte;
-		 sizes->fromBegginningBytes = -diff;
+		 sizes->toEndBytes = restToEnd;
+		 sizes->fromBegginningBytes = fullSizeWithHeader - restToEnd;
+		 ringBuffer->pointerToNextToWriteByte = ringBuffer->start + sizes->fromBegginningBytes;
+	 }
+	 //todo should sync
+	 int restToEndForFlush = (ringBuffer->start + ringBuffer->size) - ringBuffer->pointerToFirstNoFlushedByte;
+	 if (restToEnd < logEntryHeaderLength) {
+		 ringBuffer->pointerToFirstNoFlushedByte = ringBuffer->start;
 	 }
 	 return oldStartToWrite;
  }
@@ -241,9 +307,13 @@ bool writeToFile(FileHandler *handler, int* start, int length) {
  }
 
  void flushAll() {
-	 Sleep(5000);
+	 Sleep(1000);
  }
 
  void freeMemory(void *pointer) {
 	 free(pointer);
+ }
+
+ int sizeOfLogEntryHeader() {
+	 return sizeof(bool) + sizeof(int);
  }

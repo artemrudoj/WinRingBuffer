@@ -27,11 +27,19 @@ bool initRingBuffer(int size) {
 		PRINT("initLocker incorrect");
 		goto free_buf;
 	}
-	if (!initFlushThread(&MainRingBuffer->flusherThread)) {
-		PRINT("initFlushThread incorrect");
+	MainRingBuffer->bufferForFlushingThread = allocateMemory(2*size);
+	if (MainRingBuffer->bufferForFlushingThread == NULL) {
+		PRINT("MainRingBuffer->start = NULL");
 		goto free_buf;
 	}
+	
+	if (!initFlushThread(&MainRingBuffer->flusherThread)) {
+		PRINT("initFlushThread incorrect");
+		goto free_buf_for_flush;
+	}
 	return true;
+free_buf_for_flush:
+	freeMemory(MainRingBuffer->bufferForFlushingThread);
 free_buf:
 	freeMemory(MainRingBuffer->start);
 free_main_buf:
@@ -62,11 +70,10 @@ void log(char * string) {
 }
 
 void flush(RingBuffer *ringBuffer) {
-	char buf[200];
 	int length;
-	void * lastNonFlushedPointer = calculatePossibleFlushesSizes(ringBuffer, buf, &length);
+	void * lastNonFlushedPointer = prepareBufferForFlush(ringBuffer, &length);
 	if (lastNonFlushedPointer != NULL) {
-		writeToFile(&ringBuffer->filehandler, buf, length);
+		writeToFile(&ringBuffer->filehandler, ringBuffer->bufferForFlushingThread, length);
 		ringBuffer->pointerToFirstNoFlushedByte = lastNonFlushedPointer;
 	}
 }
@@ -107,8 +114,8 @@ bool isEnoughtForHeader(RingBuffer *buffer, char * pointer) {
 		return false;
 	}
 }
-//todo shoudle be correct type for address
- void* calculatePossibleFlushesSizes(RingBuffer *ringBuffer, char *buffer, int *sumLength) {
+//
+ void* prepareBufferForFlush(RingBuffer *ringBuffer,  int *sumLength) {
 	 // nothing to flush
 	 if (ringBuffer->pointerToFirstNoFlushedByte == ringBuffer->pointerToNextToWriteByte) {
 		 return NULL;
@@ -122,7 +129,7 @@ bool isEnoughtForHeader(RingBuffer *buffer, char * pointer) {
 		 iterator = ringBuffer->start;
 	 }
 	 *sumLength = 0;
-	 char *tmpBuffer = buffer;
+	 char *tmpBuffer = ringBuffer->bufferForFlushingThread;
 	 void *firstToNonFlushed = iterator;
 	 while (iterator->isReady == 1) {
 		 (*sumLength) += iterator->size;

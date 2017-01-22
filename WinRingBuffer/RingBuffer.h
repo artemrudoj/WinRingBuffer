@@ -28,6 +28,7 @@ typedef struct _FileHandler {
 
 typedef struct _RingBuffer {
 	char* start;
+	char* bufferForFlushingThread;
 	int  size;
 	char* pointerToFirstNoFlushedByte;
 	char* pointerToNextToWriteByte;
@@ -63,10 +64,9 @@ bool lockForLog(RingBuffer *ringBuffer);
 bool unlockForLog(RingBuffer *ringBuffer);
 void* tryToReservPointers(RingBuffer * ringBuffer, int size, ShouldWrite *sizes);
 void saveToBuffer(RingBuffer *ringBuffer, char* strat, char *string, ShouldWrite *sizes);
-void* calculatePossibleFlushesSizes(RingBuffer *ringBuffer, char *buffer, int *sumLength);
+void* prepareBufferForFlush(RingBuffer *ringBuffer, int *sumLength);
 bool shouldFlush(RingBuffer *ringBuffer);
 void notifyForFlush(RingBuffer *ringBuffer);
-//todo shoudle be correct type for address
 bool writeToFile(FileHandler *handler, int* start, int length);
 int calculateCurrentFreeSpace(RingBuffer *buffer);
 void* allocateMemory(int size);
